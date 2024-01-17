@@ -1,56 +1,47 @@
 # Libraries
 import gym
-from gym import wrappers
 import math
 import random
 import numpy as np
-import matplotlib
 import matplotlib.pyplot as plt
 from collections import deque, namedtuple
 from itertools import count
-from PIL import Image
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torchvision.transforms as T
 
-# CartPole environment
+# openai gym CartPole environment
 env = gym.make("CartPole-v1")
-
-# matplotlib setting
-is_ipython = "inline" in matplotlib.get_backend()
-if is_ipython:
-    from IPython import display
-plt.ion()
 
 # device setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameters
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 GAMMA = 0.99
-EPS_START = 0.9
-EPS_END = 0.05
-EPS_DECAY = 1000
+EPS = 0.9
+EPS_DECAY = 0.999
 LR = 0.0001
 TAU = 0.005
 
 # Q-Network
 class DQN(nn.Module):
-    def __init__(self, input_size, output_size):
+    def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
-        self.input_size = input_size
-        self.output_size = output_size
-        
-        self.fc1 = nn.Linear(input_size, 128)
-        self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, output_size)
+        self.fc1 = nn.Linear(n_observations, 32)
+        self.fc2 = nn.Linear(64, 128)
+        self.fc3 = nn.Linear(128, 128)
+        self.fc4 = nn.Linear(128, n_actions)
         
     def forward(self, x):
+        x = x.to(device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        x = F.relu(self.fc3(x))
+        return self.fc4(x)
 
 # Replay Buffer
 Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
@@ -71,32 +62,29 @@ class ReplayMemory(object):
 # number of actions
 n_actions = env.action_space.n
 # state
-state, info = env.reset()
+observation = env.reset()
 # number of observations
-n_observations = len(state)
+n_observations = len(observation)
 
 # networks
-policy_net = DQN(n_observations, n_actions).to(device)
-target_net = DQN(n_observations, n_actions).to(device)
+policy_net = DQN(n_observations, n_actions).to(device)  # Q-network which has to be optimized
+target_net = DQN(n_observations, n_actions).to(device)  # Q-network used to calculate target
 target_net.load_state_dict(policy_net.state_dict())
 
-optimizer = optim.Adam(policy_net.parameters(), lr=LR)
+optimizer = optim.RMSprop(policy_net.parameters(), lr=LR)
 memory = ReplayMemory(10000)
-
-steps_done = 0
-episode_durations = []
 
 # select action with decaying-epsilon greedy
 def get_action(state):
-    global steps_done
     sample = random.random()
-    eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * steps_done / EPS_DECAY)
-    if sample > eps_threshold:
+    eps = max(0.01, EPS*EPS_DECAY)
+    if sample > eps:
         with torch.no_grad():
             return policy_net(state).max(1)[1].view(1, 1)
     else:
         return torch.tensor([[env.action_space.sample()]], device=device, dtype=torch.long)
-    
+
+# optimize Q-network
 def optimize_net():
     if len(memory) < BATCH_SIZE:
         return
@@ -122,48 +110,66 @@ def optimize_net():
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
     
     # Huber loss
-    criterion = nn.SmoothL1Loss()
+    criterion = nn.MSELoss()
     loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
     
+    optimizer.zero_grad()
+    loss.backward()
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
+        
+### Train ###
+EPISODES = 300
     
-    
-if torch.cuda.is_available():
-    EPISODES = 600
-else:
-    EPISODES = 50
+scores = []
     
 for episode in range(EPISODES):
-    state, info = env.reset()
+    score = 0
+    state = env.reset()
     state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
-    
     for t in count():
-        action = get_action(state)
-        observation, reward, terminated, truncated, _ = env.step(action.item())
-        reward = torch.tensor([reward], device=device)
-        done = terminated or truncated
+        env.render()
         
-        if terminated:
+        # select action
+        action = get_action(state)
+        # act
+        observation, reward, done, info = env.step(action.item())
+        # get reward
+        reward = reward if not done else -100
+        reward = torch.tensor([reward], device=device)
+
+        if done:
             next_state = None
         else:
             next_state = torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
-            
+        
+        # store transition 
         memory.push(state, action, next_state, reward)
         
         state = next_state
         
+        # optimize Q-network
         optimize_net()
         
         target_net_state_dict = target_net.state_dict()
         policy_net_state_dict = policy_net.state_dict()
         
+        # update target network
         for key in policy_net_state_dict:
             target_net_state_dict[key] = policy_net_state_dict[key] * TAU + target_net_state_dict[key]*(1-TAU)
         target_net.load_state_dict(target_net_state_dict)
         
-        if done:
-            episode_durations.append(t+1)
-            break
+        score += reward
         
+        if done:
+            scores.append(score)
+            print(f"episode: {episode+1} | score: {score} | timesteps: {t}")
+            break 
+env.close()       
 print('Complete')
+
+plt.plot(scores)
+plt.axis('off')
+plt.xlabel('episode')
+plt.ylabel('score')
+plt.show()
