@@ -206,12 +206,15 @@ class EarlyStopping:
             
             
 agent = DDPGAgent(n_states, n_actions, -max_action, max_action)
-es = EarlyStopping(patience=10000, verbose=True, delta=0)
+es = EarlyStopping(patience=1000, verbose=True, delta=0)
 scores = []
 times = []
 sum_of_time = 0
 
 for episode in range(EPISODES):
+    '''if es.stop:
+        break'''
+    
     score = 0
     time = 0
     state = env.reset()

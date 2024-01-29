@@ -32,8 +32,8 @@ class Critic(nn.Module):
         self.fc3 = nn.Linear(300, n_actions)
         
     def forward(self, s, a):
-        out = F.relu(self.fc1(torch.cat([s, a], 1)))
-        out = F.relu(self.fc2(out))
+        out = F.leaky_relu(self.fc1(torch.cat([s, a], 1)))
+        out = F.leaky_relu(self.fc2(out))
         out = self.fc3(out)
         return out
     
@@ -52,19 +52,18 @@ best_critic.load_state_dict(torch.load("/Users/user/Desktop/rl/DDPG/ddpg_best_cr
 for i in range(5):
     score = 0
     time = 0
-    pre_time = 999
     state = env.reset()
+    
     while True:
         env.render()
         state = state.astype(np.float64)
-        state = torch.FloatTensor(state)
+        state = torch.FloatTensor(state).view(1, 2)
         action = best_actor(state)
         action = action.detach().cpu()
         next_states, rewards, done, info = env.step(action)
         time += 1
         car_pos, car_vel = next_states[0], next_states[1]
         rewards = 100 if car_pos >= 0.45 else rewards
-        rewards = rewards + 50 if (time < pre_time and done) else rewards
         
         state = next_states
         score += rewards
