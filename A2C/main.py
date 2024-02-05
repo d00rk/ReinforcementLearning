@@ -10,7 +10,7 @@ env_name = "CartPole-v1"
 EPISODES = 2000
 LR = 0.005
 GAMMA = 0.95
-ACTION_RATIO = 0.2
+ACTION_RATIO = 0.1
 
 class EarlyStopping:
     def __init__(self, patience=10, delta=0, verbose=False, trace_func=print):
